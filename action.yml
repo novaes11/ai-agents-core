@@ -1,0 +1,27 @@
+name: 'AI Agents Core'
+description: 'Core infrastructure for AI Agents PR integration'
+inputs:
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+  pr_number:
+    description: 'Pull Request number'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      shell: bash
+      run: pip install -r ${{ github.action_path }}/requirements.txt
+      
+    - name: Run main script
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+      run: python ${{ github.action_path }}/main.py
