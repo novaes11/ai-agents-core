@@ -1,11 +1,14 @@
 name: 'AI Agents Core'
-description: 'Core infrastructure for AI Agents PR integration'
+description: 'Core infrastructure for AI Agents PR integration via Gemini'
 inputs:
   github_token:
     description: 'GitHub token for API access'
     required: true
   pr_number:
     description: 'Pull Request number'
+    required: true
+  gemini_api_key:
+    description: 'Gemini API Key for model inference'
     required: true
 runs:
   using: 'composite'
@@ -24,4 +27,5 @@ runs:
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
         PR_NUMBER: ${{ inputs.pr_number }}
+        GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
       run: python ${{ github.action_path }}/main.py
