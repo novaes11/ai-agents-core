@@ -17,6 +17,28 @@ Motor Lógico: **Gemini 1.5 Pro** via `google-generativeai`.
 
 ---
 
+## 👥 O Catálogo de Especialistas (Squad Builder)
+
+A seleção dos agentes que atuarão nos projetos clientes ocorre por meio da ferramenta `squad-builder`. A ferramenta baixa perfis do repositório open source [msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents) e gera a configuração local necessária.
+
+Para provisionar o Esquadrão em um novo projeto cliente, execute o script base no diretório alvo:
+
+```bash
+# Listar os grupos de especialistas disponíveis:
+python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py list
+
+# Extrair as definições do agente alvo (exemplo: engineering-code-reviewer):
+python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py show engineering-code-reviewer
+
+# Instalar os perfis de interesse apontando os códigos listados:
+python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py install --agents 3.09,14.02 --ref <SHA-DA-LISTAGEM>
+
+# Provisionar a esteira para o GitHub Actions automaticamente:
+python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py init
+```
+
+---
+
 ## 🛠️ Guia de Configuração e Uso
 
 O orquestrador pode ser executado tanto localmente quanto hospedado em Actions na nuvem. Em ambos os cenários, ele depende de chaves de autorização de integração lidas como **Variáveis de Ambiente**.
