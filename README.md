@@ -39,6 +39,13 @@ python /ai-agents-core/skills/squad-builder/scripts/squad.py init
 
 ---
 
+## 🤖 Uso com Assistentes de IA (Cursor, Copilot, Gemini)
+
+Se você utiliza IDEs com Inteligência Artificial ou assistentes como o ChatGPT/Claude para interagir com este repositório, o projeto conta com um guia nativo.
+Basta pedir para a sua IA ler o arquivo **`AI_INSTRUCTIONS.md`** na raiz do projeto. A própria IA assumirá o papel de Consultora, entrevistando você sobre o seu projeto, sugerindo os melhores agentes do Squad Builder e gerando os comandos de configuração automaticamente.
+
+---
+
 ## 🛠️ Guia de Configuração e Uso
 
 O orquestrador pode ser executado tanto localmente quanto hospedado em Actions na nuvem. Em ambos os cenários, ele depende de chaves de autorização de integração lidas como **Variáveis de Ambiente**.

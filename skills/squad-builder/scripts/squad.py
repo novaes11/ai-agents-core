@@ -220,25 +220,78 @@ def cmd_install(args):
     print(f"\nManifesto: {dest / 'squad-config.yml'}")
     print(f"Agentes: {len(downloaded)} | Commit de origem: {sha}")
 
+    try:
+        ans = input("\nDeseja configurar o workflow do GitHub Actions para estes agentes agora? [S/n]: ").strip().lower()
+        if ans in ("", "s", "sim", "y", "yes"):
+            cmd_init(args)
+    except EOFError:
+        pass
+
 
 def cmd_init(args):
     dest = Path.cwd().resolve()
+    squad_dir = _resolve_dest(args.dest) if hasattr(args, "dest") else dest / DEFAULT_DEST
+    config_path = squad_dir / "squad-config.yml"
+    
+    slugs = []
+    if config_path.exists():
+        lines = config_path.read_text(encoding="utf-8").splitlines()
+        for line in lines:
+            if line.startswith("  - slug:"):
+                slugs.append(line.split(":", 1)[1].strip())
+                
+    print("\n=== Configuração do Workflow do GitHub Actions ===")
+    if slugs:
+        print(f"Agentes detectados: {', '.join(slugs)}")
+    else:
+        print("Nenhum agente detectado no manifesto.")
+        
+    try:
+        default_orchestrator = slugs[0] if slugs else "planner"
+        orchestrator = input(f"Quem será o orquestrador do squad? [{default_orchestrator}]: ").strip()
+        if not orchestrator:
+            orchestrator = default_orchestrator
+            
+        default_order = ",".join(slugs) if slugs else "planner,developer,tester"
+        order = input(f"Qual a ordem de execução dos agentes? [{default_order}]: ").strip()
+        if not order:
+            order = default_order
+            
+        print("\nGatilhos disponíveis:")
+        print("1 - pull_request (Ao abrir ou atualizar um PR)")
+        print("2 - push (Ao commitar na branch main)")
+        print("3 - workflow_dispatch (Execução manual via painel do GitHub)")
+        print("4 - issue_comment (Ao comentar em uma issue/PR)")
+        trigger_choice = input("Escolha o gatilho principal [1]: ").strip()
+    except EOFError:
+        orchestrator = slugs[0] if slugs else "planner"
+        order = ",".join(slugs) if slugs else "planner,developer,tester"
+        trigger_choice = "1"
+        
+    trigger_block = ""
+    if trigger_choice == "2":
+        trigger_block = "on:\n  push:\n    branches: [ main ]"
+    elif trigger_choice == "3":
+        trigger_block = "on:\n  workflow_dispatch:\n    inputs:\n      notion_task_id:\n        description: 'ID da tarefa'\n        required: true"
+    elif trigger_choice == "4":
+        trigger_block = "on:\n  issue_comment:\n    types: [created]"
+    else:
+        trigger_block = "on:\n  pull_request:\n    types: [opened, synchronize]"
+
     workflows_dir = dest / ".github" / "workflows"
     workflows_dir.mkdir(parents=True, exist_ok=True)
     
-    workflow_path = workflows_dir / "ai-review.yml"
+    workflow_path = workflows_dir / "ai-squad.yml"
     
-    workflow_content = f"""name: AI Squad Review
+    workflow_content = f"""name: AI Squad Orchestration
 
-on:
-  pull_request:
-    types: [opened, synchronize]
+{trigger_block}
 
 jobs:
-  review:
+  run-squad:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
     steps:
       - name: Checkout repository
@@ -248,12 +301,14 @@ jobs:
         uses: novaes11/ai-agents-core@main
         with:
           github_token: ${{{{ secrets.GITHUB_TOKEN }}}}
-          pr_number: ${{{{ github.event.pull_request.number }}}}
           gemini_api_key: ${{{{ secrets.GEMINI_API_KEY }}}}
+          notion_api_key: ${{{{ secrets.NOTION_API_KEY }}}}
+          orchestrator: '{orchestrator}'
+          agent_order: '{order}'
 """
     workflow_path.write_text(workflow_content, encoding="utf-8")
-    print(f"Workflow criado em: {workflow_path}")
-    print("Lembre-se de configurar a variavel GEMINI_API_KEY nos Secrets do repositorio.")
+    print(f"\n✅ Workflow criado em: {workflow_path}")
+    print("Lembre-se de configurar as secrets GEMINI_API_KEY, NOTION_API_KEY e GITHUB_TOKEN no GitHub.")
 
 
 def main(argv=None):
@@ -277,6 +332,7 @@ def main(argv=None):
     p_install.set_defaults(func=cmd_install)
     
     p_init = sub.add_parser("init", help="gera o workflow do GitHub Actions no projeto")
+    p_init.add_argument("--dest", default=DEFAULT_DEST, help=f"padrao: {DEFAULT_DEST}")
     p_init.set_defaults(func=cmd_init)
 
     args = parser.parse_args(argv)
