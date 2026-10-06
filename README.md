@@ -25,16 +25,16 @@ Para provisionar o Esquadrão em um novo projeto cliente, execute o script base 
 
 ```bash
 # Listar os grupos de especialistas disponíveis:
-python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py list
+python /ai-agents-core/skills/squad-builder/scripts/squad.py list
 
 # Extrair as definições do agente alvo (exemplo: engineering-code-reviewer):
-python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py show engineering-code-reviewer
+python /ai-agents-core/skills/squad-builder/scripts/squad.py show engineering-code-reviewer
 
 # Instalar os perfis de interesse apontando os códigos listados:
-python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py install --agents 3.09,14.02 --ref <SHA-DA-LISTAGEM>
+python /ai-agents-core/skills/squad-builder/scripts/squad.py install --agents 3.09,14.02 --ref <SHA-DA-LISTAGEM>
 
 # Provisionar a esteira para o GitHub Actions automaticamente:
-python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py init
+python /ai-agents-core/skills/squad-builder/scripts/squad.py init
 ```
 
 ---
