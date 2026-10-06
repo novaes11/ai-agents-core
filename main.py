@@ -1,7 +1,16 @@
 import os
 import sys
+import yaml
 import google.generativeai as genai
 from github import Github, GithubException
+
+def read_file_safe(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        print(f"Erro ao ler arquivo {path}: {e}")
+        return None
 
 def main():
     token = os.environ.get('GITHUB_TOKEN')
@@ -44,20 +53,59 @@ def main():
             print("Nenhuma alteração de código detectada neste PR.")
             sys.exit(0)
 
-        # Instrução para o Agente Revisor
-        prompt = f"""Atue como um Agente Revisor de Código Sênior. 
+        # Logica de Squad (Phase 2)
+        workspace = os.getcwd()
+        squad_config_path = os.path.join(workspace, '.squad', 'squad-config.yml')
+        agents_to_run = []
+        
+        if os.path.exists(squad_config_path):
+            print("Configuração de Squad detectada. Carregando agentes...")
+            with open(squad_config_path, 'r', encoding='utf-8') as f:
+                squad_config = yaml.safe_load(f)
+            
+            for agent_info in squad_config.get('agents', []):
+                agent_file_path = os.path.join(workspace, '.squad', agent_info['file'])
+                agent_profile = read_file_safe(agent_file_path)
+                if agent_profile:
+                    # Enforcar a diretriz técnica e remover o estilo de formatação do perfil
+                    system_prompt = (
+                        f"{agent_profile}\n\n"
+                        "DIRETRIZ DE EXECUÇÃO ESTRITA:\n"
+                        "Atue conforme o perfil acima, mas limite-se a uma linguagem puramente técnica, direta e factual. "
+                        "Não use adjetivos de vendas, não adicione personalidade, humor ou emojis. Seja clínico. "
+                        "Analise as alterações de código fornecidas e identifique falhas lógicas, de segurança ou boas práticas. "
+                        "Se não houver problemas no seu escopo de análise, responda de forma breve."
+                    )
+                    agents_to_run.append({
+                        'name': agent_info.get('slug', 'Agente'),
+                        'prompt': system_prompt
+                    })
+                else:
+                    print(f"Aviso: Perfil não encontrado para o agente {agent_info.get('slug')}.")
+        
+        if not agents_to_run:
+            print("Nenhum squad configurado ou arquivos ausentes. Utilizando agente revisor padrão (Fallback).")
+            prompt = f"""Atue como um Agente Revisor de Código Sênior. 
 Analise as alterações de código abaixo e identifique erros lógicos, falhas de segurança ou violações de boas práticas. 
 Mantenha a resposta técnica, direta e estruturada. Caso não encontre erros, aprove a alteração.
 
 Diff do Pull Request:
 {diff_text}
 """
-        # Geração do feedback via Gemini
-        response = model.generate_content(prompt)
-        feedback = response.text
+            agents_to_run.append({
+                'name': 'Agente Revisor Padrão',
+                'prompt': prompt
+            })
+
+        feedbacks = []
+        for agent in agents_to_run:
+            print(f"Executando inferência para: {agent['name']}")
+            full_prompt = f"{agent['prompt']}\n\n--- INÍCIO DO DIFF ---\n{diff_text}\n--- FIM DO DIFF ---"
+            
+            response = model.generate_content(full_prompt)
+            feedbacks.append(f"### 🤖 Feedback: {agent['name']}\n\n{response.text}\n")
         
-        # Adicionar o aviso de IA no topo
-        comment_body = f"🤖 **Revisão Automatizada (AI Agent)**\n\n{feedback}"
+        comment_body = f"## Revisão Automatizada (AI Squad)\n\n" + "\n---\n".join(feedbacks)
         
         pr.create_issue_comment(comment_body)
         print("Revisão executada e comentário postado com sucesso no PR.")

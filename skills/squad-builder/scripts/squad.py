@@ -221,6 +221,41 @@ def cmd_install(args):
     print(f"Agentes: {len(downloaded)} | Commit de origem: {sha}")
 
 
+def cmd_init(args):
+    dest = Path.cwd().resolve()
+    workflows_dir = dest / ".github" / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+    
+    workflow_path = workflows_dir / "ai-review.yml"
+    
+    workflow_content = f"""name: AI Squad Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run AI Agents Core
+        uses: novaes11/ai-agents-core@main
+        with:
+          github_token: ${{{{ secrets.GITHUB_TOKEN }}}}
+          pr_number: ${{{{ github.event.pull_request.number }}}}
+          gemini_api_key: ${{{{ secrets.GEMINI_API_KEY }}}}
+"""
+    workflow_path.write_text(workflow_content, encoding="utf-8")
+    print(f"Workflow criado em: {workflow_path}")
+    print("Lembre-se de configurar a variavel GEMINI_API_KEY nos Secrets do repositorio.")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -240,6 +275,9 @@ def main(argv=None):
     p_install.add_argument("--ref", default=DEFAULT_REF, help="use o SHA exibido por 'list'")
     p_install.add_argument("--dest", default=DEFAULT_DEST, help=f"padrao: {DEFAULT_DEST}")
     p_install.set_defaults(func=cmd_install)
+    
+    p_init = sub.add_parser("init", help="gera o workflow do GitHub Actions no projeto")
+    p_init.set_defaults(func=cmd_init)
 
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):

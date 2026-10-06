@@ -40,6 +40,12 @@ Resolva `<skill_dir>` como o diretorio desta skill. O script exige Python 3.9 ou
    O comando grava em `.squad/agents/` os perfis escolhidos e em `.squad/squad-config.yml` o manifesto com repositorio, commit, limites e hash SHA-256 de cada arquivo. Para mudar o destino use `--dest <subdiretorio>`.
 6. **Revisar.** Mostre o manifesto ao usuario. Para alterar a selecao, execute `install` de novo com a lista completa desejada: o manifesto e sobrescrito.
 
+7. **Provisionar.**
+   ```bash
+   python <skill_dir>/scripts/squad.py init
+   ```
+   O comando cria o arquivo de workflow `.github/workflows/ai-review.yml` no projeto atual, apontando para o repositorio `novaes11/ai-agents-core`.
+
 ## Destino dos arquivos
 
 O padrao e `.squad/`, e nao `.agents/`. O diretorio `.Agents/` e usado como log local de auditoria e entra no `.gitignore`. Os perfis precisam ser versionados no projeto para que o CI os leia. No Windows os nomes `.agents` e `.Agents` sao equivalentes, o que causaria conflito.
