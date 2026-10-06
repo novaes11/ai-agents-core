@@ -1,71 +1,112 @@
 # AI Agents Core 🤖
 
-Infraestrutura central de orquestração de múltiplos agentes de Inteligência Artificial para atuação direta em esteiras de CI/CD (GitHub Actions). Este repositório atua como uma **Custom Composite Action**, sendo consumido remotamente por outros repositórios.
+Infraestrutura de orquestração autônoma de múltiplos agentes de Inteligência Artificial estruturada via **Grafos Acíclicos Direcionados (DAG)**. Em vez de atuar como um mero revisor de código em *Pull Requests*, este projeto converte o fluxo numa **Fábrica de Desenvolvimento Autônoma**, processando tarefas, gerando arquitetura, escrevendo o código final, garantindo a segurança estática e entregando o pacote com testes em um novo Pull Request.
 
-## 🎯 Arquitetura e Objetivo
+## 🎯 Arquitetura do Pipeline
 
-O projeto segue o princípio de separação de responsabilidades:
-- Toda a lógica de IA (código Python, orquestração e configuração de modelos) fica isolada neste repositório.
-- Repositórios alvo ("clientes") consomem a inteligência via GitHub Actions, anulando a necessidade de uso de submódulos no Git.
+O fluxo descarta o formato de "Chat Livre" em favor de rotinas de entrada e saída (I/O) validadas e encadeadas. A saída determinística de um agente torna-se o *input* exato do LLM seguinte:
 
-O núcleo operacional trabalha sob o modelo de **Squad de Agentes**. Repositórios clientes configuram a ativação simultânea de especialistas (como Revisores de Código, Engenheiros de Segurança ou Otimizadores de Banco de Dados) para análise de Pull Requests. O orquestrador executa inferências individuais de cada perfil e publica um comentário estruturado consolidando as correções.
+1. **Ingestão de Requisitos:** Conexão nativa com o Notion API. O sistema extrai blocos de texto, descrição e critérios de aceite da tarefa demandada.
+2. **Planner (Project Manager):** Recebe o contexto completo da especificação e lê a atual árvore de diretórios do repositório. Retorna o plano arquitetural de implementação limitando os arquivos impactados.
+3. **Developer:** Com base no planejamento restrito, projeta todo o código fonte e as modificações nos arquivos apontados.
+4. **Security:** Analisa estritamente a saída do *Developer* visando vulnerabilidades conhecidas (padrões OWASP). Se falhas críticas não puderem ser corrigidas em sua camada, bloqueia a esteira.
+5. **Tester:** Analisa a entrega funcional aprovada pelo time de segurança e desenvolve a bateria de testes unitários (PyTest/Unittest).
+6. **Entrega (PyGithub):** Uma nova *branch* secundária é aberta remotamente, contendo as alterações. O sistema cria os arquivos e submete um detalhado Pull Request assinado pelo Esquadrão.
 
-A arquitetura de linguagem e processamento do diff é executada pela API do **Gemini 1.5 Pro**.
-
----
-
-## 🛠️ O Catálogo de Especialistas (Squad Builder)
-
-A seleção dos agentes que atuarão nos projetos clientes ocorre por meio da ferramenta `squad-builder`. A ferramenta atua com base no repositório de perfis open source [msitarzewski/agency-agents](https://github.com/msitarzewski/agency-agents), baixando perfis e estruturando o fluxo em novos ambientes sem carregar arquivos desnecessários.
+Motor Lógico: **Gemini 1.5 Pro** via `google-generativeai`.
 
 ---
 
-## 🚀 Guia de Integração para Novos Projetos (Repositórios Alvo)
+## 🛠️ Guia de Configuração e Uso
 
-Para instanciar o serviço de revisão automatizada em um novo código-fonte, proceda com os passos abaixo diretamente do diretório raiz do **seu projeto cliente**.
+O orquestrador pode ser executado tanto localmente quanto hospedado em Actions na nuvem. Em ambos os cenários, ele depende de chaves de autorização de integração lidas como **Variáveis de Ambiente**.
 
-### 1. Selecionar e Instalar o Squad
+### 1. Preparação das Variáveis (`.env`)
 
-Execute o assistente residente no `ai-agents-core` (garanta que possui Python 3.9+ e substitua o caminho conforme a estrutura do seu ambiente local):
+Fornecemos na raiz do projeto o arquivo `.env.example`. Você deve replicar ou preencher essas credenciais no ambiente onde rodar o script.
+
+```env
+# Token do GitHub com permissões de 'contents: write' e 'pull-requests: write'
+GITHUB_TOKEN=ghp_chave_aqui
+
+# Chave do Google AI Studio (modelo de linguagem)
+GEMINI_API_KEY=AIzaSy_chave_aqui
+
+# Token de Integração do Notion
+NOTION_API_KEY=secret_chave_aqui
+
+# ID de 32 caracteres da página/tarefa no Notion
+NOTION_TASK_ID=identificador_da_pagina
+
+# O caminho relativo ao dono do repositório de trabalho
+GITHUB_REPOSITORY=org/projeto
+```
+
+### 2. Uso Local (Debug e Testes Isolados)
+
+No seu terminal local, execute os comandos:
 
 ```bash
-# Listar os grupos de especialistas disponíveis e o hash de commit:
-python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py list
+# 1. Configurar isolamento virtual
+python -m venv venv
 
-# Extrair as definições do agente alvo (exemplo: engineering-code-reviewer):
-python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py show engineering-code-reviewer
+# Windows
+venv\Scripts\activate
+# Linux / macOS
+source venv/bin/activate
 
-# Instalar os perfis de interesse apontando os respectivos códigos listados
-# Exemplo: instalando Code Reviewer (3.09) e Application Security (14.02)
-python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py install --agents 3.09,14.02 --ref <SHA-DA-LISTAGEM>
+# 2. Instalar motor do orquestrador
+pip install -r requirements.txt
+
+# 3. Exportar suas variáveis contidas no .env (utilize o utilitário do seu shell ou declare no terminal)
+export GITHUB_TOKEN="sua_chave"
+export GEMINI_API_KEY="sua_chave"
+export NOTION_API_KEY="sua_chave"
+export NOTION_TASK_ID="seu_id"
+export GITHUB_REPOSITORY="seu_usuario/seu_repositorio"
+
+# 4. Iniciar rotina do Squad
+python main.py
 ```
-*O comando irá gerar a pasta local `.squad/` contendo os perfis formatados e o manifesto YAML de execução (`squad-config.yml`).*
 
-### 2. Provisionar o Workflow de CI/CD
+### 3. Integração Contínua (GitHub Actions)
 
-Ainda na raiz do repositório cliente, provisione a esteira para o GitHub Actions:
+Para instanciar essa força de trabalho automatizada direto no portal GitHub de um outro projeto cliente (operando na nuvem):
 
-```bash
-python /caminho/para/ai-agents-core/skills/squad-builder/scripts/squad.py init
+1. Acesse o **Projeto Cliente > Settings > Secrets and variables > Actions**.
+2. Armazene o `GITHUB_TOKEN`, `GEMINI_API_KEY` e `NOTION_API_KEY` como `Repository Secrets`.
+3. Adicione o seguinte Workflow no diretório `.github/workflows/ai-squad.yml` do projeto cliente:
+
+```yaml
+name: 'AI Squad Builder'
+on: 
+  workflow_dispatch:
+    inputs:
+      notion_task_id:
+        description: 'Cole o ID da Tarefa do Notion'
+        required: true
+
+jobs:
+  run-squad:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Chamando Squad via Action
+        uses: seu_usuario/ai-agents-core@main
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          notion_api_key: ${{ secrets.NOTION_API_KEY }}
+          notion_task_id: ${{ github.event.inputs.notion_task_id }}
 ```
-*Isso gerará o arquivo `.github/workflows/ai-review.yml`, referenciando diretamente a Composite Action.*
 
-### 3. Autenticar Variáveis
-
-O núcleo de IA exige a autenticação na API do Google AI Studio. Para manter a regra Zero Secrets no código:
-1. No repositório alvo no GitHub, navegue em **Settings > Secrets and variables > Actions**.
-2. Cadastre o token da plataforma na variável `Repository secret` denominada `GEMINI_API_KEY`.
-
-### 4. Consolidar e Operar
-
-Faça o *commit* da pasta `.squad` e do diretório `.github` no seu repositório alvo. O sistema de IA analisará automaticamente as extensões e sintaxes incluídas em cada novo Pull Request ou modificações subsequentes, postando os feedbacks em threads automatizadas.
+Desta forma, os desenvolvedores de negócio não manipulam código em máquina física, precisando apenas acionar o gatilho "Run workflow" e informar o ID da tarefa originada no Notion. O Esquadrão publicará o Pull Request contendo a resolução.
 
 ---
 
 ## 🔒 Diretrizes e Governança
 
-A ação prioriza as seguintes métricas na operação:
-
-- **Zero Acesso Livre ao CLI:** Os agentes operacionais atuam no paradigma estático (análise direta sobre os diffs na memória) e escrita via API Rest do GitHub. A execução de comandos shell de maneira arbitrária via LLM não ocorre.
-- **Contenção Estrita de Custos:** A verificação se baseia na restrição sistêmica de loop. Agentes ativados operam limitados a uma iteração isolada, suprimindo o desperdício computacional em diálogos autônomos.
-- **Uniformidade Clínica:** Traços de personalidade provenientes do catálogo público sofrem sobreposição (override) dentro do executor em Python. As requisições determinam estritamente comunicações diretas, análises factuais e devolutivas essencialmente técnicas, removendo tom humorístico ou retórica descritiva em formato de venda.
+- **Redução Sistemática de Alucinação:** A extração do *response_schema* baseada nos objetos tipados em `pydantic` impossibilita descritivos extensos que desviem o encadeamento operacional para fora da instrução lógica.
+- **Validação Cruzada de Segurança:** Implantações e blocos de código oriundos do Developer não progridem de estágio caso a detecção no *prompt* de Security levante bloqueios críticos ou reescreva o objeto com violações.
