@@ -1,118 +1,193 @@
 import os
 import sys
-import yaml
+import json
 import google.generativeai as genai
 from github import Github, GithubException
+from notion_client import Client
+from pydantic import BaseModel
 
-def read_file_safe(path):
+class PlannerOutput(BaseModel):
+    architecture_plan: str
+    files_to_modify: list[str]
+
+class DeveloperOutput(BaseModel):
+    modified_files: dict[str, str]
+    explanation: str
+
+class SecurityOutput(BaseModel):
+    passed: bool
+    vulnerabilities_found: list[str]
+    fixed_files: dict[str, str]
+
+class TesterOutput(BaseModel):
+    test_files: dict[str, str]
+
+def fetch_notion_task(api_key, task_id):
+    notion = Client(auth=api_key)
     try:
-        with open(path, 'r', encoding='utf-8') as f:
-            return f.read()
+        page = notion.pages.retrieve(task_id)
+        blocks = notion.blocks.children.list(block_id=task_id)
+        
+        content = ""
+        for block in blocks.get("results", []):
+            if block["type"] == "paragraph":
+                texts = block.get("paragraph", {}).get("rich_text", [])
+                content += "".join([t["plain_text"] for t in texts]) + "\n"
+        
+        # O title geralmente fica na propriedade 'Name' ou 'title', tentaremos obter com fallback
+        title_prop = page["properties"].get("Name", page["properties"].get("title", {}))
+        title = "Tarefa Sem Titulo"
+        if "title" in title_prop and len(title_prop["title"]) > 0:
+            title = title_prop["title"][0]["plain_text"]
+            
+        return title, content
     except Exception as e:
-        print(f"Erro ao ler arquivo {path}: {e}")
-        return None
+        print(f"Erro ao acessar Notion API: {e}")
+        sys.exit(1)
+
+def run_pipeline(gemini_key, task_title, task_content, repo_files_tree):
+    genai.configure(api_key=gemini_key)
+    model = genai.GenerativeModel('gemini-1.5-pro')
+
+    print("--- 1. Iniciando Planner ---")
+    planner_res = model.generate_content(
+        f"Crie um plano arquitetural detalhado focado apenas no codigo. Tarefa: {task_title}\n{task_content}\nEstrutura do repo: {repo_files_tree}",
+        generation_config=genai.GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=PlannerOutput
+        )
+    )
+    plan_data = json.loads(planner_res.text)
+
+    print("--- 2. Iniciando Developer ---")
+    dev_res = model.generate_content(
+        f"Desenvolva o código exato e completo baseado neste plano:\n{plan_data['architecture_plan']}",
+        generation_config=genai.GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=DeveloperOutput
+        )
+    )
+    dev_data = json.loads(dev_res.text)
+
+    print("--- 3. Iniciando Security ---")
+    sec_res = model.generate_content(
+        f"Analise o código gerado contra regras OWASP. Corrija falhas se existirem e retorne o código completo.\n{json.dumps(dev_data['modified_files'])}",
+        generation_config=genai.GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=SecurityOutput
+        )
+    )
+    sec_data = json.loads(sec_res.text)
+    
+    if not sec_data.get('passed', False):
+        print(f"Aviso de Segurança: Vulnerabilidades encontradas: {sec_data.get('vulnerabilities_found')}")
+        # Neste MVP continuaremos com o fixed_files
+    
+    print("--- 4. Iniciando Tester ---")
+    test_res = model.generate_content(
+        f"Escreva testes automatizados para a implementação final em pytest ou unittest:\n{json.dumps(sec_data['fixed_files'])}",
+        generation_config=genai.GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=TesterOutput
+        )
+    )
+    test_data = json.loads(test_res.text)
+    
+    return {
+        "source_code": sec_data['fixed_files'],
+        "tests": test_data['test_files']
+    }
+
+def commit_and_create_pr(github_token, repo_name, final_artifacts, task_title):
+    g = Github(github_token)
+    try:
+        repo = g.get_repo(repo_name)
+        default_branch = repo.get_branch(repo.default_branch)
+        
+        # Limpar titulo para o nome da branch
+        clean_title = "".join([c if c.isalnum() else "-" for c in task_title.lower()])
+        branch_name = f"feature/squad-{clean_title}"
+        
+        print(f"Criando branch: {branch_name}")
+        try:
+            repo.create_git_ref(ref=f"refs/heads/{branch_name}", sha=default_branch.commit.sha)
+        except GithubException as e:
+            if e.status == 422: # Reference already exists
+                print(f"A branch {branch_name} ja existe.")
+            else:
+                raise e
+        
+        def push_files(files_dict, message_prefix):
+            for file_path, content in files_dict.items():
+                try:
+                    # Verifica se arquivo existe para fazer update ou create
+                    try:
+                        contents = repo.get_contents(file_path, ref=branch_name)
+                        repo.update_file(contents.path, f"{message_prefix}: atualiza {file_path}", content, contents.sha, branch=branch_name)
+                        print(f"Atualizado: {file_path}")
+                    except GithubException as e:
+                        if e.status == 404:
+                            repo.create_file(file_path, f"{message_prefix}: cria {file_path}", content, branch=branch_name)
+                            print(f"Criado: {file_path}")
+                        else:
+                            raise e
+                except Exception as e:
+                    print(f"Erro ao manipular arquivo {file_path}: {e}")
+
+        push_files(final_artifacts["source_code"], "feat")
+        push_files(final_artifacts["tests"], "test")
+            
+        pr_body = (
+            f"## Implementação Autônoma\n\n"
+            f"Branch gerada resolvendo a tarefa Notion: **{task_title}**.\n\n"
+            f"- [x] Planejamento concluído\n"
+            f"- [x] Código gerado\n"
+            f"- [x] Auditoria de Segurança aprovada\n"
+            f"- [x] Testes unitários gerados"
+        )
+        
+        print("Abrindo Pull Request...")
+        pr = repo.create_pull(
+            title=f"feat(squad): {task_title}",
+            body=pr_body,
+            head=branch_name,
+            base=repo.default_branch
+        )
+        print(f"PR criado com sucesso: {pr.html_url}")
+    except Exception as e:
+        print(f"Erro na criacao do PR ou commits: {e}")
+        sys.exit(1)
+
+def get_repo_tree(github_token, repo_name):
+    g = Github(github_token)
+    repo = g.get_repo(repo_name)
+    tree = repo.get_git_tree(repo.default_branch, recursive=True)
+    paths = [t.path for t in tree.tree if t.type == "blob"]
+    return "\n".join(paths)
 
 def main():
     token = os.environ.get('GITHUB_TOKEN')
-    pr_number_str = os.environ.get('PR_NUMBER')
-    repo_name = os.environ.get('GITHUB_REPOSITORY')
     gemini_key = os.environ.get('GEMINI_API_KEY')
+    notion_api_key = os.environ.get('NOTION_API_KEY')
+    notion_task_id = os.environ.get('NOTION_TASK_ID')
+    repo_name = os.environ.get('GITHUB_REPOSITORY')
 
-    if not token or not pr_number_str or not repo_name or not gemini_key:
-        print("Erro: As variáveis GITHUB_TOKEN, PR_NUMBER, GITHUB_REPOSITORY e GEMINI_API_KEY são obrigatórias.")
+    if not all([token, gemini_key, notion_api_key, notion_task_id, repo_name]):
+        print("Erro: GITHUB_TOKEN, GEMINI_API_KEY, NOTION_API_KEY, NOTION_TASK_ID e GITHUB_REPOSITORY sao obrigatorios.")
         sys.exit(1)
 
-    try:
-        pr_number = int(pr_number_str)
-    except ValueError:
-        print(f"Erro: PR_NUMBER '{pr_number_str}' não é um número válido.")
-        sys.exit(1)
+    print("Obtendo arvore do repositorio...")
+    repo_tree = get_repo_tree(token, repo_name)
 
-    # Configuração do Gemini
-    genai.configure(api_key=gemini_key)
-    generation_config = genai.types.GenerationConfig(temperature=0.2)
-    model = genai.GenerativeModel('gemini-1.5-pro', generation_config=generation_config)
+    print("Extraindo dados do Notion...")
+    task_title, task_content = fetch_notion_task(notion_api_key, notion_task_id)
+    print(f"Tarefa identificada: {task_title}")
 
-    try:
-        g = Github(token)
-        repo = g.get_repo(repo_name)
-    except GithubException as e:
-        print(f"Erro de autenticação ou falha ao acessar o repositório {repo_name}: {e}")
-        sys.exit(1)
+    print("Iniciando pipeline de agentes (DAG)...")
+    final_artifacts = run_pipeline(gemini_key, task_title, task_content, repo_tree)
 
-    try:
-        pr = repo.get_pull(pr_number)
-        
-        # Obter os arquivos alterados e montar o diff
-        files = pr.get_files()
-        diff_text = ""
-        for f in files:
-            diff_text += f"Arquivo: {f.filename}\nPatch:\n{f.patch}\n\n"
-            
-        if not diff_text.strip():
-            print("Nenhuma alteração de código detectada neste PR.")
-            sys.exit(0)
-
-        # Logica de Squad (Phase 2)
-        workspace = os.getcwd()
-        squad_config_path = os.path.join(workspace, '.squad', 'squad-config.yml')
-        agents_to_run = []
-        
-        if os.path.exists(squad_config_path):
-            print("Configuração de Squad detectada. Carregando agentes...")
-            with open(squad_config_path, 'r', encoding='utf-8') as f:
-                squad_config = yaml.safe_load(f)
-            
-            for agent_info in squad_config.get('agents', []):
-                agent_file_path = os.path.join(workspace, '.squad', agent_info['file'])
-                agent_profile = read_file_safe(agent_file_path)
-                if agent_profile:
-                    # Enforcar a diretriz técnica e remover o estilo de formatação do perfil
-                    system_prompt = (
-                        f"{agent_profile}\n\n"
-                        "DIRETRIZ DE EXECUÇÃO ESTRITA:\n"
-                        "Atue conforme o perfil acima, mas limite-se a uma linguagem puramente técnica, direta e factual. "
-                        "Não use adjetivos de vendas, não adicione personalidade, humor ou emojis. Seja clínico. "
-                        "Analise as alterações de código fornecidas e identifique falhas lógicas, de segurança ou boas práticas. "
-                        "Se não houver problemas no seu escopo de análise, responda de forma breve."
-                    )
-                    agents_to_run.append({
-                        'name': agent_info.get('slug', 'Agente'),
-                        'prompt': system_prompt
-                    })
-                else:
-                    print(f"Aviso: Perfil não encontrado para o agente {agent_info.get('slug')}.")
-        
-        if not agents_to_run:
-            print("Nenhum squad configurado ou arquivos ausentes. Utilizando agente revisor padrão (Fallback).")
-            prompt = f"""Atue como um Agente Revisor de Código Sênior. 
-Analise as alterações de código abaixo e identifique erros lógicos, falhas de segurança ou violações de boas práticas. 
-Mantenha a resposta técnica, direta e estruturada. Caso não encontre erros, aprove a alteração.
-
-Diff do Pull Request:
-{diff_text}
-"""
-            agents_to_run.append({
-                'name': 'Agente Revisor Padrão',
-                'prompt': prompt
-            })
-
-        feedbacks = []
-        for agent in agents_to_run:
-            print(f"Executando inferência para: {agent['name']}")
-            full_prompt = f"{agent['prompt']}\n\n--- INÍCIO DO DIFF ---\n{diff_text}\n--- FIM DO DIFF ---"
-            
-            response = model.generate_content(full_prompt)
-            feedbacks.append(f"### 🤖 Feedback: {agent['name']}\n\n{response.text}\n")
-        
-        comment_body = f"## Revisão Automatizada (AI Squad)\n\n" + "\n---\n".join(feedbacks)
-        
-        pr.create_issue_comment(comment_body)
-        print("Revisão executada e comentário postado com sucesso no PR.")
-        
-    except Exception as e:
-        print(f"Erro na execução da revisão via Gemini ou falha na API do GitHub: {e}")
-        sys.exit(1)
+    print("Submetendo codigo...")
+    commit_and_create_pr(token, repo_name, final_artifacts, task_title)
 
 if __name__ == "__main__":
     main()

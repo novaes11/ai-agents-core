@@ -1,3 +1,5 @@
-PyGithub
-google-generativeai
-pyyaml
+PyGithub==2.5.0
+google-generativeai==0.8.3
+notion-client==2.3.0
+pydantic==2.9.2
+pyyaml==6.0.2

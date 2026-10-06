@@ -1,14 +1,17 @@
-name: 'AI Agents Core'
-description: 'Core infrastructure for AI Agents PR integration via Gemini'
+name: 'AI Autonomous Squad'
+description: 'Esquadrão autônomo de desenvolvimento via Gemini e Notion'
 inputs:
   github_token:
-    description: 'GitHub token for API access'
-    required: true
-  pr_number:
-    description: 'Pull Request number'
+    description: 'Token do GitHub'
     required: true
   gemini_api_key:
-    description: 'Gemini API Key for model inference'
+    description: 'Chave de API do Gemini'
+    required: true
+  notion_api_key:
+    description: 'Token de Integração do Notion'
+    required: true
+  notion_task_id:
+    description: 'ID da página do Notion com a especificação da tarefa'
     required: true
 runs:
   using: 'composite'
@@ -22,10 +25,12 @@ runs:
       shell: bash
       run: pip install -r ${{ github.action_path }}/requirements.txt
       
-    - name: Run main script
+    - name: Run Orchestrator
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
-        PR_NUMBER: ${{ inputs.pr_number }}
         GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+        NOTION_API_KEY: ${{ inputs.notion_api_key }}
+        NOTION_TASK_ID: ${{ inputs.notion_task_id }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
       run: python ${{ github.action_path }}/main.py
