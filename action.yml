@@ -13,6 +13,10 @@ inputs:
   notion_task_id:
     description: 'ID da página do Notion com a especificação da tarefa'
     required: true
+  gemini_model:
+    description: 'Modelo do Gemini para o Esquadrão'
+    required: false
+    default: 'gemini-2.5-pro'
 runs:
   using: 'composite'
   steps:
@@ -32,5 +36,6 @@ runs:
         GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
         NOTION_API_KEY: ${{ inputs.notion_api_key }}
         NOTION_TASK_ID: ${{ inputs.notion_task_id }}
+        GEMINI_MODEL: ${{ inputs.gemini_model }}
         GITHUB_REPOSITORY: ${{ github.repository }}
       run: python ${{ github.action_path }}/main.py

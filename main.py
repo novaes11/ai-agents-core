@@ -34,23 +34,49 @@ def fetch_notion_task(api_key, task_id):
                 texts = block.get("paragraph", {}).get("rich_text", [])
                 content += "".join([t["plain_text"] for t in texts]) + "\n"
         
-        # O title geralmente fica na propriedade 'Name' ou 'title', tentaremos obter com fallback
-        title_prop = page["properties"].get("Name", page["properties"].get("title", {}))
+        # O title fica na propriedade do tipo 'title' (pode se chamar 'Task', 'Name', 'title', etc.)
         title = "Tarefa Sem Titulo"
-        if "title" in title_prop and len(title_prop["title"]) > 0:
-            title = title_prop["title"][0]["plain_text"]
+        for prop_name, prop_val in page.get("properties", {}).items():
+            if prop_val.get("type") == "title":
+                title_items = prop_val.get("title", [])
+                if title_items:
+                    title = "".join([t.get("plain_text", "") for t in title_items])
+                break
             
         return title, content
     except Exception as e:
         print(f"Erro ao acessar Notion API: {e}")
         sys.exit(1)
 
+def generate_with_fallback(prompt, generation_config):
+    candidate_models = [
+        os.environ.get("GEMINI_MODEL", "gemini-2.5-pro"),
+        "gemini-2.5-flash",
+        "gemini-pro-latest",
+        "gemini-flash-latest"
+    ]
+    seen = set()
+    unique_candidates = [c for c in candidate_models if not (c in seen or seen.add(c))]
+
+    last_error = None
+    for model_name in unique_candidates:
+        try:
+            model = genai.GenerativeModel(model_name)
+            return model.generate_content(prompt, generation_config=generation_config)
+        except Exception as e:
+            err_msg = str(e)
+            if "not found" in err_msg.lower() or "not supported" in err_msg.lower() or "404" in err_msg:
+                print(f"[Aviso] Modelo '{model_name}' indisponivel. Tentando proximo modelo da lista...")
+                last_error = e
+                continue
+            raise e
+    raise RuntimeError(f"Falha ao gerar conteudo com os modelos Gemini testados. Ultimo erro: {last_error}")
+
 def run_pipeline(gemini_key, task_title, task_content, repo_files_tree):
     genai.configure(api_key=gemini_key)
-    model = genai.GenerativeModel('gemini-1.5-pro')
 
     print("--- 1. Iniciando Planner ---")
-    planner_res = model.generate_content(
+    planner_res = generate_with_fallback(
         f"Crie um plano arquitetural detalhado focado apenas no codigo. Tarefa: {task_title}\n{task_content}\nEstrutura do repo: {repo_files_tree}",
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
@@ -60,7 +86,7 @@ def run_pipeline(gemini_key, task_title, task_content, repo_files_tree):
     plan_data = json.loads(planner_res.text)
 
     print("--- 2. Iniciando Developer ---")
-    dev_res = model.generate_content(
+    dev_res = generate_with_fallback(
         f"Desenvolva o código exato e completo baseado neste plano:\n{plan_data['architecture_plan']}",
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
@@ -70,7 +96,7 @@ def run_pipeline(gemini_key, task_title, task_content, repo_files_tree):
     dev_data = json.loads(dev_res.text)
 
     print("--- 3. Iniciando Security ---")
-    sec_res = model.generate_content(
+    sec_res = generate_with_fallback(
         f"Analise o código gerado contra regras OWASP. Corrija falhas se existirem e retorne o código completo.\n{json.dumps(dev_data['modified_files'])}",
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
@@ -84,7 +110,7 @@ def run_pipeline(gemini_key, task_title, task_content, repo_files_tree):
         # Neste MVP continuaremos com o fixed_files
     
     print("--- 4. Iniciando Tester ---")
-    test_res = model.generate_content(
+    test_res = generate_with_fallback(
         f"Escreva testes automatizados para a implementação final em pytest ou unittest:\n{json.dumps(sec_data['fixed_files'])}",
         generation_config=genai.GenerationConfig(
             response_mime_type="application/json",
